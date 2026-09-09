@@ -14,6 +14,7 @@ import { CUSTOM_ITEM_BUCKET_NAME } from '../utils/customItem';
 import { buildMenuSalesSummary } from '../utils/menuSalesSummary';
 // v4.7 TO DO 18.3: expected cash tutup shift dari SEMUA transaksi Selesai tersinkron
 import { computeShiftStats, EMPTY_SHIFT_STATS } from '../utils/shiftStats';
+import { printShiftSummary } from '../utils/shiftPrint';
 import { fetchTransactionsFromCloud, fetchShiftsFromCloud } from '../lib/cloudSync';
 import { useState, useMemo, useEffect, useRef } from 'react';
 import {
@@ -320,83 +321,21 @@ export default function Layout() {
       console.warn('[Shift] Gagal mencatat audit log saat tutup shift (dilewati):', e);
     }
 
-    // v4.7 + v4.10 P.4: Agregasi penjualan per menu dari SEMUA transaksi shift — helper murni
-    // (menu by nama; item non-menu → bucket "Item Non-Menu" dengan hpp = customHpp → profit)
-    const menuSalesSorted = buildMenuSalesSummary(todayTx);
-    const totalItemQty = menuSalesSorted.reduce((a, r) => a + r.qty, 0);
-
-    const now = new Date();
-    const lines = [
-      `=== RINGKASAN TRANSAKSI ===`,
-      `${settings.storeName}`,
-      `Tanggal: ${now.toLocaleDateString('id-ID')}`,
-      `Jam Mulai: ${new Date(activeShift?.openedAt || now).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`,
-      `Jam Tutup: ${now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`,
-      `Kasir: ${currentUser.name}`,
-      ``,
-      `Modal Awal: ${formatRupiah(activeShift?.openingCash || 0)}`,
-      `Total Penjualan: ${formatRupiah(shiftStats.totalSales)}`,
-      `  - Tunai (Cash): ${formatRupiah(shiftStats.cashSales || 0)}`,
-      `  - QRIS: ${formatRupiah(shiftStats.qrisSales || 0)}`,
-      `  - Transfer: ${formatRupiah(shiftStats.transferSales || 0)}`,
-      `Jumlah Transaksi: ${shiftStats.totalTx}`,
-      `Total Item Terjual: ${totalItemQty} item`,
-      `Kas Masuk: +${formatRupiah(shiftStats.cashIn || 0)}`,
-      `Kas Keluar: -${formatRupiah(shiftStats.cashOut || 0)}`,
-      ...(shiftStats.refundedCashSales > 0
-        ? [`Refund Tunai (dikembalikan): -${formatRupiah(shiftStats.refundedCashSales)}`]
-        : []),
-      ``,
-      ...(menuSalesSorted.length > 0
-        ? [
-            `--- Penjualan Menu ---`,
-            ...menuSalesSorted.flatMap((data) => {
-              const unitPrice = data.qty > 0 ? Math.round(data.revenue / data.qty) : 0;
-              const rows = [
-                `${data.name}`,
-                `  ${data.qty} x ${formatRupiah(unitPrice)}          ${formatRupiah(data.revenue)}`,
-              ];
-              // v4.10 P.4: baris bucket "Item Non-Menu" menampilkan LABA KOTOR
-              // (revenue − customHpp) — akuntansi modal dagangan non-menu di struk shift.
-              if (data.name === CUSTOM_ITEM_BUCKET_NAME) {
-                rows.push(`  Laba Kotor: ${formatRupiah(data.profit)}`);
-              }
-              return rows;
-            }),
-            ``,
-          ]
-        : []),
-      `Expected Cash: ${formatRupiah(shiftStats.expectedCash)}`,
-      `Kas Aktual (Fisik): ${formatRupiah(closingCash)}`,
-      `Selisih Kas: ${formatRupiah(closingCash - shiftStats.expectedCash)}`,
-      ``,
-      // H.2 (v4.9.3): rekap per metode pembayaran — hemat kertas thermal (sebelumnya
-      // 1 baris per transaksi; 300 tx ≈ 1 meter kertas). Konsisten dengan shiftStats
-      // (fix 20.1): transaksi refunded di-exclude dari hitungan pelanggan.
-      `--- Riwayat Transaksi ---`,
-      ...(() => {
-        const salesTx = todayTx.filter((t) => !t.refunded);
-        const qris = salesTx.filter((t) => t.paymentMethod === 'QRIS').length;
-        const transfer = salesTx.filter((t) => t.paymentMethod === 'Transfer').length;
-        const cash = salesTx.filter((t) => t.paymentMethod === 'Cash').length;
-        const other = salesTx.length - (qris + transfer + cash); // fallback paymentMethod null/undefined
-        const rows = [
-          `QRIS      | ${qris} Pelanggan`,
-          `Transfer  | ${transfer} Pelanggan`,
-          `Cash      | ${cash} Pelanggan`,
-        ];
-        if (other > 0) rows.push(`Lainnya    | ${other} Pelanggan`);
-        return rows;
-      })(),
-      ``,
-      `===========================`,
-    ];
-
     // 2. Cetak ringkasan — best-effort (kegagalan printer TIDAK menggagalkan tutup shift)
-    try {
-      await printTextRaw(lines, settings);
-    } catch (e) {
-      console.warn('[Shift] Gagal mencetak ringkasan (shift tetap ditutup):', e);
+    if (activeShift) {
+      try {
+        await printShiftSummary({
+          shift: activeShift,
+          storeName: settings.storeName,
+          transactions,
+          movements,
+          cashierName: currentUser?.name,
+          closingCash,
+          isReprint: false,
+        }, settings);
+      } catch (e) {
+        console.warn('[Shift] Gagal mencetak ringkasan (shift tetap ditutup):', e);
+      }
     }
 
     // 2b. H.3 Pilar 1 (v4.9.3) — guard konflik force close: bila shift ini SUDAH ditutup
