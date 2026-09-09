@@ -55,12 +55,14 @@ export function computeShiftStats(
   movements: CashMovement[]
 ): ShiftStats {
   const openedAtMs = new Date(activeShift.openedAt).getTime();
+  const closedAtMs = activeShift.closedAt ? new Date(activeShift.closedAt).getTime() : undefined;
 
   const shiftTx = transactions.filter(
     (t) =>
       t.txStatus === 'Selesai' &&
       !t.splitParentId &&
-      new Date(t.date).getTime() >= openedAtMs
+      new Date(t.date).getTime() >= openedAtMs &&
+      (!closedAtMs || new Date(t.date).getTime() <= closedAtMs)
   );
 
   // v4.7 TO DO 20.1: basis LAPORAN = transaksi yang belum di-refund (pendapatan yang
@@ -91,7 +93,11 @@ export function computeShiftStats(
   // fallback: window waktu (semua kasir, karena laci fisik dipakai bersama).
   const shiftMovements = movements.filter((m) => {
     if (m.shiftId && m.shiftId === activeShift.id) return true;
-    return new Date(m.date).getTime() >= openedAtMs - 60000;
+    const mTime = new Date(m.date).getTime();
+    if (closedAtMs) {
+      return mTime >= openedAtMs - 60000 && mTime <= closedAtMs + 60000;
+    }
+    return mTime >= openedAtMs - 60000;
   });
   const cashIn = shiftMovements
     .filter((m) => m.type === 'in')
