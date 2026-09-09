@@ -19,6 +19,7 @@ import PinModal from '../components/PinModal';
 import { useToastStore } from '../store/toastStore';
 import { useAuditLogStore } from '../store/auditLogStore';
 import { computeShiftStats } from '../utils/shiftStats';
+import { printShiftSummary } from '../utils/shiftPrint';
 import type { CashierShift } from '../types';
 import { exportPnlPDF, exportTransactionsPDF, exportInventoryPDF, exportShiftPDF, exportCashPDF, exportPpnPDF } from '../utils/pdfExport';
 // v4.7 TO DO 11.2 (P0.1): Laporan PPN bulanan — logika murni
@@ -53,6 +54,7 @@ import {
   Receipt,
   Tag,
   Lock,
+  Printer,
 } from 'lucide-react';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend, ArcElement);
@@ -316,6 +318,51 @@ export default function Reports() {
     setShowForceClosePin(false);
     setForceCloseTarget(null);
     setForceCloseCash('');
+  };
+
+  // ============================================================
+  // Cetak Ulang Ringkasan Rekap Shift (isReprint = true)
+  // ============================================================
+  const [printingShiftId, setPrintingShiftId] = useState<string | null>(null);
+
+  const handleReprintShift = async (emp: any) => {
+    const shiftKey = emp.id || emp.name;
+    setPrintingShiftId(shiftKey);
+    try {
+      const targetShift: CashierShift = shifts.find((s) => s.id === emp.id) ?? {
+        id: emp.id || `shift-${Date.now()}`,
+        userId: emp.id || 'unknown',
+        userName: emp.name,
+        openedAt: emp.firstTx,
+        closedAt: emp.status === 'closed' ? emp.lastTx : undefined,
+        openingCash: emp.openingCash || 0,
+        closingCash: emp.closingCash,
+        expectedCash: emp.expectedCash,
+        cashDifference: emp.cashDiff,
+        totalSales: emp.revenue,
+        totalTransactions: emp.txCount,
+        status: emp.status === 'open' ? 'open' : 'closed',
+      };
+
+      useToastStore.getState().addToast(`Mencetak ringkasan shift ${emp.name}...`, 'info');
+      await printShiftSummary(
+        {
+          shift: targetShift,
+          storeName: settings.storeName,
+          transactions,
+          movements,
+          cashierName: emp.name,
+          closingCash: emp.closingCash,
+          isReprint: true,
+        },
+        settings
+      );
+    } catch (err) {
+      console.error('Gagal mencetak ulang shift:', err);
+      useToastStore.getState().addToast('Gagal mencetak ulang ringkasan shift', 'error');
+    } finally {
+      setPrintingShiftId(null);
+    }
   };
 
   // Filter shifts by date range
@@ -1453,24 +1500,35 @@ export default function Reports() {
                           </p>
                         </div>
                       </div>
-                      {/* H.3 Pilar 1 (v4.9.3): Manager force close shift gantung */}
-                      {emp.status === 'open' && currentUser?.role === 'Manager' && (() => {
-                        const targetShift = filteredShifts.find((s) => s.id === emp.id) ?? null;
-                        if (!targetShift) return null;
-                        return (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setForceCloseTarget(targetShift);
-                              setForceCloseCash('');
-                            }}
-                            className="btn-secondary text-xs py-2 px-3 flex items-center gap-1.5 border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 whitespace-nowrap"
-                            title="Tutup paksa shift yang tertinggal (device kasir rusak / kasir lupa tutup)"
-                          >
-                            <Lock size={14} /> Tutup Paksa
-                          </button>
-                        );
-                      })()}
+                      <div className="flex items-center gap-2 self-end sm:self-center">
+                        <button
+                          type="button"
+                          onClick={() => handleReprintShift(emp)}
+                          disabled={printingShiftId === (emp.id || emp.name)}
+                          className="btn-secondary text-xs py-2 px-3 flex items-center gap-1.5 border-brand-200 dark:border-brand-900/50 text-brand-600 dark:text-brand-400 hover:bg-brand-50 dark:hover:bg-brand-950/30 whitespace-nowrap"
+                          title="Cetak ulang ringkasan rekap shift"
+                        >
+                          <Printer size={14} /> Cetak Rekap
+                        </button>
+                        {/* H.3 Pilar 1 (v4.9.3): Manager force close shift gantung */}
+                        {emp.status === 'open' && currentUser?.role === 'Manager' && (() => {
+                          const targetShift = filteredShifts.find((s) => s.id === emp.id) ?? null;
+                          if (!targetShift) return null;
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setForceCloseTarget(targetShift);
+                                setForceCloseCash('');
+                              }}
+                              className="btn-secondary text-xs py-2 px-3 flex items-center gap-1.5 border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 whitespace-nowrap"
+                              title="Tutup paksa shift yang tertinggal (device kasir rusak / kasir lupa tutup)"
+                            >
+                              <Lock size={14} /> Tutup Paksa
+                            </button>
+                          );
+                        })()}
+                      </div>
                     </div>
 
                     {/* Primary Metrics */}
